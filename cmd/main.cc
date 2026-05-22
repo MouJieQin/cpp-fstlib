@@ -249,6 +249,18 @@ void map_search_word(const T &byte_code, string_view cmd, bool verbose,
     for (const auto &[word, output] : results) {
       cout << word << ": " << output << endl;
     }
+  } else if (cmd == "regex") {
+    auto p_results = matcher.regex_search(word);
+    const auto &results = p_results.first;
+    const auto &error_message = p_results.second;
+    if (!error_message.empty()) {
+      cerr << error_message << endl;
+      return;
+    }
+    ret = !results.empty();
+    for (const auto &[word, output] : results) {
+      cout << word << ": " << output << endl;
+    }
   }
   if (!ret) { cout << "not found..." << endl; }
 }
@@ -296,6 +308,18 @@ void set_search_word(const T &byte_code, string_view cmd, bool verbose,
         word, [&](const auto &word) { cout << word << endl; });
   } else if (cmd == "fuzzy") {
     auto results = matcher.edit_distance_search(word, edit_distance, 1, 1, 2);
+    ret = !results.empty();
+    for (const auto &word : results) {
+      cout << word << endl;
+    }
+  } else if (cmd == "regex") {
+    auto p_results = matcher.regex_search(word);
+    const auto &results = p_results.first;
+    const auto &error_message = p_results.second;
+    if (!error_message.empty()) {
+      cerr << error_message << endl;
+      return;
+    }
     ret = !results.empty();
     for (const auto &word : results) {
       cout << word << endl;
@@ -373,6 +397,7 @@ void usage() {
     longest      FST [word]  - longest common prefix search
     predictive   FST [word]  - predictive search
     fuzzy        FST [word]  - edit distance search
+    regex        FST [word]  - regex search
     spellcheck   FST [word]  - check spelling
 
     dot          source      - convert to dot format
@@ -502,7 +527,8 @@ int main(int argc, char **argv) {
       }
 
     } else if (cmd == "search" || cmd == "prefix" || cmd == "longest" ||
-               cmd == "predictive" || cmd == "fuzzy" || cmd == "spellcheck") {
+               cmd == "predictive" || cmd == "fuzzy" || cmd == "regex" ||
+               cmd == "spellcheck") {
       ifstream fin(in_path, ios_base::binary);
       if (!fin) { return error(1); }
 

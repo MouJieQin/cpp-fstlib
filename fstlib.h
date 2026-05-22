@@ -25,6 +25,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#define PCRE2_CODE_UNIT_WIDTH 8
+#include <pcre2.h>
 
 #if !defined(__cplusplus) || __cplusplus < 201703L
 #error "Requires complete C++17 support"
@@ -2042,6 +2044,110 @@ struct DummyAutomaton {
 };
 
 //-----------------------------------------------------------------------------
+// RegexAutomaton
+//-----------------------------------------------------------------------------
+
+class Pcre2RegexAutomaton {
+public:
+  // Note: For FST traversal, it is highly recommended that your regex
+  // patterns are anchored (e.g., "^pattern$"). Otherwise, the engine
+  // assumes wildcards at the beginning and will never prune branches.
+  explicit Pcre2RegexAutomaton(std::string_view pattern,
+                               std::string &error_message) {
+    int errornumber;
+    PCRE2_SIZE erroroffset;
+    error_message.clear();
+
+    // Compile the regex. PCRE2_ANCHORED forces the pattern to match from
+    // the start of the string, which is required for FST prefix pruning.
+    pcre2_code *re = pcre2_compile(reinterpret_cast<PCRE2_SPTR>(pattern.data()),
+                                   pattern.size(), PCRE2_ANCHORED, &errornumber,
+                                   &erroroffset, nullptr);
+
+    if (re == nullptr) {
+      PCRE2_UCHAR buffer[256];
+      pcre2_get_error_message(errornumber, buffer, sizeof(buffer));
+      error_message =
+          std::string("PCRE2 compilation failed: " +
+                      std::string(reinterpret_cast<char *>(buffer)));
+      return;
+    }
+
+    // Wrap the compiled AST in a shared_ptr. The FST traverses by copying
+    // the automaton at branch points. We do NOT want to recompile the regex
+    // for every node in the dictionary.
+    re_ = std::shared_ptr<pcre2_code>(
+        re, [](pcre2_code *p) { pcre2_code_free(p); });
+
+    // Allocate match data (the output block for PCRE2)
+    match_data_ = std::shared_ptr<pcre2_match_data>(
+        pcre2_match_data_create_from_pattern(re_.get(), nullptr),
+        [](pcre2_match_data *m) { pcre2_match_data_free(m); });
+
+    // Evaluate the empty string initially to handle cases like "^$" or "^a?$"
+    evaluate();
+  }
+
+  // FSTs copy the automaton to explore different branches.
+  // We share the compiled regex (thread-safe, read-only) but allocate
+  // fresh match data for the new branch's state.
+  Pcre2RegexAutomaton(const Pcre2RegexAutomaton &rhs)
+      : re_(rhs.re_), buffer_(rhs.buffer_), is_match_(rhs.is_match_),
+        can_match_(true) {
+    if (re_) {
+      match_data_ = std::shared_ptr<pcre2_match_data>(
+          pcre2_match_data_create_from_pattern(re_.get(), nullptr),
+          [](pcre2_match_data *m) { pcre2_match_data_free(m); });
+    }
+  }
+
+  void step(char c) {
+    if (!can_match_) { return; }
+    buffer_ += c;
+    evaluate();
+  }
+
+  bool is_match() const { return is_match_; }
+
+  bool can_match() const { return can_match_; }
+
+private:
+  std::shared_ptr<pcre2_code> re_;
+  std::shared_ptr<pcre2_match_data> match_data_;
+  std::string buffer_;
+  bool is_match_ = false;
+  bool can_match_ = true;
+
+  void evaluate() {
+    int rc = pcre2_match(
+        re_.get(), reinterpret_cast<PCRE2_SPTR>(buffer_.data()), buffer_.size(),
+        0,                  // start offset
+        PCRE2_PARTIAL_SOFT, // CRITICAL: Enables partial prefix matching
+        match_data_.get(), nullptr);
+
+    if (rc >= 0) {
+      // A full, valid match was found.
+      is_match_ = true;
+      // We set can_match_ to true because the string might still be
+      // valid if extended (e.g. "hello" matching "^hello.*"). If the
+      // next char breaks it, the subsequent evaluate() will prune it.
+      can_match_ = true;
+    } else if (rc == PCRE2_ERROR_PARTIAL) {
+      // The current buffer is a valid prefix, but not yet a full match.
+      is_match_ = false;
+      can_match_ = true;
+    } else {
+      // PCRE2_ERROR_NOMATCH or another fatal error.
+      // The regex can no longer be satisfied. Prune this FST branch.
+      is_match_ = false;
+      can_match_ = false;
+    }
+  }
+};
+
+using RegexAutomaton = Pcre2RegexAutomaton;
+
+//-----------------------------------------------------------------------------
 // map
 //-----------------------------------------------------------------------------
 
@@ -2143,6 +2249,27 @@ public:
     return ret;
   }
 
+  std::pair<std::vector<std::pair<std::string, output_t>>, std::string>
+  regex_search(const std::string_view &pattern) const {
+    std::vector<std::pair<std::string, output_t>> results;
+
+    std::string error_message;
+    RegexAutomaton automaton(pattern, error_message);
+    if (!error_message.empty()) { return {results, error_message}; }
+
+    matcher<output_t>::depth_first_visit(
+        matcher<output_t>::header_.start_address, // 从根节点开始遍历
+        std::string(),                            // 初始空字符串
+        output_t(),                               // 初始空输出
+        automaton,                                // 正则自动机
+        [&](const std::string &word, const output_t &output) {
+          // 匹配成功时回调，收集结果
+          results.emplace_back(word, output);
+        });
+
+    return {results, error_message};
+  }
+
   std::vector<std::tuple<double, std::string, output_t>>
   suggest(std::string_view word) const {
     return matcher<output_t>::suggest_core(word, *this);
@@ -2227,6 +2354,22 @@ public:
         [&](const auto &word, const auto &) { ret.emplace_back(word); });
 
     return ret;
+  }
+
+  std::pair<std::vector<std::string>, std::string>
+  regex_search(const std::string_view &pattern) const {
+    std::vector<std::string> results;
+    std::string error_message;
+    RegexAutomaton automaton(pattern, error_message);
+    if (!error_message.empty()) { return {results, error_message}; }
+    matcher<none_t>::depth_first_visit(
+        matcher<none_t>::header_.start_address, std::string(), none_t{},
+        automaton, [&](const std::string &word, const none_t &) {
+          // 匹配成功时回调，收集结果
+          results.emplace_back(word);
+        });
+
+    return {results, error_message};
   }
 
   std::vector<std::pair<double, std::string>>
