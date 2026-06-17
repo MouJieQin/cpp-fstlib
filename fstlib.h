@@ -251,7 +251,15 @@ constexpr uint64_t kFnvBasis = 0xcbf29ce484222325ULL;
 
 using none_t = int;
 
-enum class OutputType { invalid = -1, none_t, uint32_t, uint64_t, string };
+enum class OutputType {
+  invalid = -1,
+  none_t,
+  uint32_t,
+  uint64_t,
+  string,
+  uint32bit,
+  uint64bit
+};
 
 template <typename output_t> struct OutputTraits {};
 
@@ -350,6 +358,142 @@ template <> struct OutputTraits<uint64_t> {
 
   static size_t read_byte_value(const char *p, value_type &val) {
     return vb_decode_value_reverse(p, val);
+  }
+};
+
+struct uint32bit {
+  uint32bit() : bits(0) {}
+  uint32bit(uint32_t val) : bits(val) {}
+  uint32bit operator+(const uint32bit &other) const {
+    return uint32bit(bits | other.bits);
+  }
+
+  bool operator==(const uint32bit &other) const { return bits == other.bits; }
+  uint32_t bits;
+};
+
+inline void operator+=(uint32bit &lhs, const uint32bit &rhs) {
+  lhs = lhs + rhs;
+}
+
+inline std::ostream &operator<<(std::ostream &os, const uint32bit &val) {
+  os << val.bits;
+  return os;
+}
+
+template <> struct OutputTraits<uint32bit> {
+  using value_type = uint32bit;
+
+  static OutputType type() { return OutputType::uint32bit; }
+
+  static bool empty(value_type val) { return val.bits == 0; }
+
+  static value_type init_value() { return 0; }
+
+  static std::string to_string(value_type val) {
+    return std::to_string(val.bits);
+  }
+
+  static void prepend_value(value_type &base, value_type val) {
+    base.bits |= val.bits;
+  }
+
+  static value_type get_suffix(value_type a, value_type b) {
+    return a.bits & ~b.bits;
+  }
+
+  static value_type get_common_prefix(value_type a, value_type b) {
+    return a.bits & b.bits;
+  }
+
+  template <typename T> static size_t write_value(T &buff, value_type val) {
+    auto p = reinterpret_cast<const char *>(&val);
+    buff.insert(buff.begin(), p, p + sizeof(val));
+    return sizeof(val);
+  }
+
+  static void hash_value(uint64_t &h, value_type val) {
+    hash_bytes(h, &val.bits, sizeof(val.bits));
+  }
+
+  static size_t get_byte_value_size(value_type val) {
+    return vb_encode_value_length(val.bits);
+  }
+
+  static void write_byte_value(std::ostream &os, value_type val) {
+    vb_encode_value_reverse(val.bits, os);
+  }
+
+  static size_t read_byte_value(const char *p, value_type &val) {
+    return vb_decode_value_reverse(p, val.bits);
+  }
+};
+
+struct uint64bit {
+  uint64bit() : bits(0) {}
+  uint64bit(uint64_t val) : bits(val) {}
+  uint64bit operator+(const uint64bit &other) const {
+    return uint64bit(bits | other.bits);
+  }
+
+  bool operator==(const uint64bit &other) const { return bits == other.bits; }
+  uint64_t bits;
+};
+
+inline void operator+=(uint64bit &lhs, const uint64bit &rhs) {
+  lhs = lhs + rhs;
+}
+
+inline std::ostream &operator<<(std::ostream &os, const uint64bit &val) {
+  os << val.bits;
+  return os;
+}
+
+template <> struct OutputTraits<uint64bit> {
+  using value_type = uint64bit;
+
+  static OutputType type() { return OutputType::uint64bit; }
+
+  static bool empty(value_type val) { return val.bits == 0; }
+
+  static value_type init_value() { return 0; }
+
+  static std::string to_string(value_type val) {
+    return std::to_string(val.bits);
+  }
+
+  static void prepend_value(value_type &base, value_type val) {
+    base.bits |= val.bits;
+  }
+
+  static value_type get_suffix(value_type a, value_type b) {
+    return a.bits & ~b.bits;
+  }
+
+  static value_type get_common_prefix(value_type a, value_type b) {
+    return a.bits & b.bits;
+  }
+
+  template <typename T> static size_t write_value(T &buff, value_type val) {
+    auto p = reinterpret_cast<const char *>(&val);
+    buff.insert(buff.begin(), p, p + sizeof(val));
+    return sizeof(val);
+  }
+
+  static void hash_value(uint64_t &h, value_type val) {
+    hash_bytes(h, &val.bits, sizeof(val.bits));
+  }
+
+  static size_t get_byte_value_size(value_type val) {
+    return vb_encode_value_length(val.bits);
+  }
+
+  static void write_byte_value(std::ostream &os, value_type val) {
+    vb_encode_value_reverse(val.bits, os);
+  }
+
+  static size_t read_byte_value(const char *p, value_type &val) {
+    return vb_decode_value_reverse(p, val.bits);
   }
 };
 
@@ -643,8 +787,7 @@ public:
     if (keep_all_) {
       table_.resize(kInitialTableSize, {0, nullptr});
     } else {
-      buckets_.resize(kBucketCount,
-                      {{0, nullptr}, {0, nullptr}, {0, nullptr}});
+      buckets_.resize(kBucketCount, {{0, nullptr}, {0, nullptr}, {0, nullptr}});
     }
   }
 
@@ -921,9 +1064,10 @@ build_fst_core(const Input &input, Writer &writer, bool need_output,
 //-----------------------------------------------------------------------------
 
 template <typename output_t, typename Input, typename Writer>
-inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
-                                           bool need_output, bool sorted,
-                                           bool keep_all_states = false) {
+inline std::pair<Result, size_t>
+build_fst(const Input &input, Writer &writer, bool need_output, bool sorted,
+          bool keep_all_states = false,
+          std::function<void(size_t)> progress = nullptr) {
   return build_fst_core<output_t>(
       [&](const auto &feeder) {
         if (sorted) {
@@ -932,6 +1076,7 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
             const auto &word = item.first;
             const auto &output = item.second;
             if (!feeder(word, output, input_index)) { break; }
+            if (progress) { progress(input_index); }
             input_index++;
           }
         } else {
@@ -943,10 +1088,12 @@ inline std::pair<Result, size_t> build_fst(const Input &input, Writer &writer,
                         return input[a].first < input[b].first;
                       });
           }
-
+          size_t index = 0;
           for (auto input_index : sorted_indexes) {
             const auto &[word, output] = input[input_index];
             if (!feeder(word, output, input_index)) { break; }
+            if (progress) { progress(index); }
+            index += 1;
           }
         }
       },
@@ -1074,8 +1221,7 @@ template <typename output_t, bool need_state_output> struct FstRecord {
 
   size_t byte_size() const {
     auto sz = 1u;
-    if (!omit_label &&
-        ope.label_index(need_output, need_state_output) == 0) {
+    if (!omit_label && ope.label_index(need_output, need_state_output) == 0) {
       sz += 1;
     }
     if (!ope.data.no_address) { sz += vb_encode_value_length(delta); }
@@ -1107,8 +1253,7 @@ template <typename output_t, bool need_state_output> struct FstRecord {
       OutputTraits<uint32_t>::write_byte_value(os,
                                                static_cast<uint32_t>(delta));
     }
-    if (!omit_label &&
-        ope.label_index(need_output, need_state_output) == 0) {
+    if (!omit_label && ope.label_index(need_output, need_state_output) == 0) {
       os.write(&label, 1);
     }
     os.write(reinterpret_cast<const char *>(&ope.byte), sizeof(ope.byte));
@@ -1270,11 +1415,12 @@ public:
     if (!dump_) { header.write(os_); }
 
     if (verbose_) {
-      const size_t char_index_size  = FstOpe::char_index_size(need_output_, need_state_output);
+      const size_t char_index_size =
+          FstOpe::char_index_size(need_output_, need_state_output);
       const size_t hub_table_size =
-          hub_ids_.empty() ? 0
-                           : (hub_ids_.size() + 1) * sizeof(uint32_t);
-      const size_t total_size = address_ + hub_table_size + char_index_size + sizeof(uint32_t) + sizeof(uint8_t);
+          hub_ids_.empty() ? 0 : (hub_ids_.size() + 1) * sizeof(uint32_t);
+      const size_t total_size = address_ + hub_table_size + char_index_size +
+                                sizeof(uint32_t) + sizeof(uint8_t);
       const auto unique_char_count =
           std::count_if(std::begin(char_count_), std::end(char_count_),
                         [](auto count) { return count > 0; });
@@ -1605,11 +1751,10 @@ private:
       }
     }
 
-    std::sort(candidates.begin(), candidates.end(),
-              [](const auto &a, const auto &b) {
-                return a.first == b.first ? a.second < b.second
-                                          : a.first > b.first;
-              });
+    std::sort(
+        candidates.begin(), candidates.end(), [](const auto &a, const auto &b) {
+          return a.first == b.first ? a.second < b.second : a.first > b.first;
+        });
 
     if (candidates.size() > kMaxHubCount) { candidates.resize(kMaxHubCount); }
 
@@ -1659,13 +1804,14 @@ private:
 template <typename output_t, typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
                                          bool sorted, bool verbose = false) {
-  FstWriter<output_t, true> writer(os, true, false, verbose,
-                                   [&](const auto &feeder) {
-                                     for (const auto &[word, _] : input) {
-                                       feeder(word);
-                                     }
-                                   },
-                                   /*single_pass=*/true);
+  FstWriter<output_t, true> writer(
+      os, true, false, verbose,
+      [&](const auto &feeder) {
+        for (const auto &[word, _] : input) {
+          feeder(word);
+        }
+      },
+      /*single_pass=*/true);
   return build_fst<output_t>(input, writer, true, sorted,
                              /*keep_all_states=*/true);
 }
@@ -1674,13 +1820,14 @@ template <typename Input>
 inline std::pair<Result, size_t> compile(const Input &input, std::ostream &os,
                                          bool need_output, bool sorted,
                                          bool verbose = false) {
-  FstWriter<uint32_t, false> writer(os, need_output, false, verbose,
-                                    [&](const auto &feeder) {
-                                      for (const auto &word : input) {
-                                        feeder(word);
-                                      }
-                                    },
-                                    /*single_pass=*/true);
+  FstWriter<uint32_t, false> writer(
+      os, need_output, false, verbose,
+      [&](const auto &feeder) {
+        for (const auto &word : input) {
+          feeder(word);
+        }
+      },
+      /*single_pass=*/true);
   return build_fst(input, writer, need_output, sorted,
                    /*keep_all_states=*/true);
 }
@@ -1963,8 +2110,22 @@ public:
   }
 
 protected:
+  size_t longest_prefix_len(std::string_view sv) const {
+    size_t longest_prefix_len;
+    matcher<output_t>::match(sv.data(), sv.size(), longest_prefix_len);
+    return longest_prefix_len;
+  }
+
   bool match(
       const char *str, size_t len,
+      std::function<void(const output_t &)> outputs = nullptr,
+      std::function<void(size_t, const output_t &)> prefixes = nullptr) const {
+    size_t longest_prefix_len;
+    return match(str, len, longest_prefix_len, outputs, prefixes);
+  }
+
+  bool match(
+      const char *str, size_t len, size_t &longest_prefix_len,
       std::function<void(const output_t &)> outputs = nullptr,
       std::function<void(size_t, const output_t &)> prefixes = nullptr) const {
 
@@ -2002,8 +2163,8 @@ protected:
         if (header_.flags.data.jump_table_labels) {
           // The labels are stored contiguously next to the jump table, so
           // the binary search only touches sequential memory.
-          auto labels = reinterpret_cast<const uint8_t *>(p) + 1 -
-                        jump_table_count;
+          auto labels =
+              reinterpret_cast<const uint8_t *>(p) + 1 - jump_table_count;
 
           auto jump_table_byte_size =
               1 + vb_len + jump_table_count * jump_table_element_size +
@@ -2145,7 +2306,7 @@ protected:
         address -= byte_size;
       }
     }
-
+    longest_prefix_len = i;
     return ret;
   }
 
@@ -2235,8 +2396,21 @@ protected:
                 should_append_state_output = true;
               }
             }
-            accept(word,
-                   should_append_state_output ? output + state_output : output);
+
+            const auto &final_output =
+                should_append_state_output ? output + state_output : output;
+
+            // compile-time check: accept supports 3 parameters (word, output,
+            // transit)
+            if constexpr (std::is_invocable_v<U &, decltype(word),
+                                              decltype(final_output),
+                                              const T &>) {
+              // 3-parameter version: pass atm
+              accept(word, final_output, atm);
+            } else {
+              // 2-parameter version: original logic (compatible with old code)
+              accept(word, final_output);
+            }
           }
         }
       }
@@ -2350,6 +2524,142 @@ protected:
 };
 
 //-----------------------------------------------------------------------------
+// UTF-8 -> UTF-32 decoder
+//-----------------------------------------------------------------------------
+
+inline bool decode_codepoint(std::string_view s8, char32_t &cp) {
+  auto l = s8.size();
+  if (l) {
+    uint8_t b = s8[0];
+    if ((b & 0x80) == 0) {
+      cp = b;
+      return true;
+    } else if ((b & 0xE0) == 0xC0) {
+      if (l >= 2) {
+        cp = ((static_cast<char32_t>(s8[0] & 0x1F)) << 6) |
+             (static_cast<char32_t>(s8[1] & 0x3F));
+        return true;
+      }
+    } else if ((b & 0xF0) == 0xE0) {
+      if (l >= 3) {
+        cp = ((static_cast<char32_t>(s8[0] & 0x0F)) << 12) |
+             ((static_cast<char32_t>(s8[1] & 0x3F)) << 6) |
+             (static_cast<char32_t>(s8[2] & 0x3F));
+        return true;
+      }
+    } else if ((b & 0xF8) == 0xF0) {
+      if (l >= 4) {
+        cp = ((static_cast<char32_t>(s8[0] & 0x07)) << 18) |
+             ((static_cast<char32_t>(s8[1] & 0x3F)) << 12) |
+             ((static_cast<char32_t>(s8[2] & 0x3F)) << 6) |
+             (static_cast<char32_t>(s8[3] & 0x3F));
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+inline std::u32string decode(std::string_view s8) {
+  std::u32string out;
+  size_t i = 0;
+  while (i < s8.size()) {
+    auto beg = i++;
+    while (i < s8.size() && (s8[i] & 0xc0) == 0x80) {
+      i++;
+    }
+    char32_t cp;
+    decode_codepoint(s8.substr(beg, i - beg), cp);
+    out += cp;
+  }
+  return out;
+}
+
+inline size_t calc_c_len(std::string_view s8) {
+  char32_t cp;
+  std::string u8code_ = "";
+  size_t c_len = 0;
+  for (size_t i = 0; i < s8.size(); ++i) {
+    u8code_ += s8[i];
+    if (decode_codepoint(u8code_, cp)) {
+      u8code_.clear();
+      c_len += 1;
+    }
+  }
+  return c_len;
+}
+
+//-----------------------------------------------------------------------------
+// PrefixDistanceAutomaton
+//-----------------------------------------------------------------------------
+
+class PrefixDistanceAutomaton {
+public:
+  PrefixDistanceAutomaton(std::string_view sv, const size_t max_distance,
+                          const size_t longest_prefix_len)
+      : s_(decode(sv)), max_distance_(max_distance),
+        longest_prefix_len_(calc_c_len(sv.substr(0, longest_prefix_len))),
+        common_prefix_len_(0), prefix_distance_(0), word_("") {
+    std::cout << "orginal world: " << sv << " practical len: " << calc_c_len(sv)
+              << std::endl;
+  }
+
+  PrefixDistanceAutomaton(const PrefixDistanceAutomaton &rhs) = default;
+
+  void step(char c) {
+    word_ += c;
+    u8code_ += c;
+    char32_t cp;
+    if (!decode_codepoint(u8code_, cp)) { return; }
+    u8code_.clear();
+
+    if (prefix_distance_ != 0) {
+      prefix_distance_ += 1;
+      return;
+    }
+
+    if (s_[common_prefix_len_] == cp) {
+      common_prefix_len_ += 1;
+    } else {
+      prefix_distance_ += 1;
+    }
+  }
+
+  bool is_match() const {
+    if (common_prefix_len_ == 0) {
+      // one common prefix at least.
+      return false;
+    }
+    return distance() <= max_distance_;
+  }
+
+  bool can_match() const {
+    if (prefix_distance_ == 0) {
+      return true;
+    } else {
+      if (common_prefix_len_ == 0) {
+        return false;
+      } else {
+        return distance() < max_distance_;
+      }
+    }
+  }
+
+  size_t distance() const {
+    return (longest_prefix_len_ - common_prefix_len_) + prefix_distance_;
+  }
+
+private:
+  const std::u32string s_;
+  const size_t max_distance_;
+  const size_t longest_prefix_len_;
+  size_t common_prefix_len_;
+  size_t prefix_distance_;
+  std::string u8code_;
+  std::string word_;
+};
+
+//-----------------------------------------------------------------------------
 // LevenshteinAutomaton
 //-----------------------------------------------------------------------------
 
@@ -2403,54 +2713,6 @@ private:
   size_t replace_cost_; // TODO: better cost function is needed?
   std::vector<size_t> state_;
   std::string u8code_;
-
-  bool decode_codepoint(std::string_view s8, char32_t &cp) const {
-    auto l = s8.size();
-    if (l) {
-      uint8_t b = s8[0];
-      if ((b & 0x80) == 0) {
-        cp = b;
-        return true;
-      } else if ((b & 0xE0) == 0xC0) {
-        if (l >= 2) {
-          cp = ((static_cast<char32_t>(s8[0] & 0x1F)) << 6) |
-               (static_cast<char32_t>(s8[1] & 0x3F));
-          return true;
-        }
-      } else if ((b & 0xF0) == 0xE0) {
-        if (l >= 3) {
-          cp = ((static_cast<char32_t>(s8[0] & 0x0F)) << 12) |
-               ((static_cast<char32_t>(s8[1] & 0x3F)) << 6) |
-               (static_cast<char32_t>(s8[2] & 0x3F));
-          return true;
-        }
-      } else if ((b & 0xF8) == 0xF0) {
-        if (l >= 4) {
-          cp = ((static_cast<char32_t>(s8[0] & 0x07)) << 18) |
-               ((static_cast<char32_t>(s8[1] & 0x3F)) << 12) |
-               ((static_cast<char32_t>(s8[2] & 0x3F)) << 6) |
-               (static_cast<char32_t>(s8[3] & 0x3F));
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
-  std::u32string decode(std::string_view s8) const {
-    std::u32string out;
-    size_t i = 0;
-    while (i < s8.size()) {
-      auto beg = i++;
-      while (i < s8.size() && (s8[i] & 0xc0) == 0x80) {
-        i++;
-      }
-      char32_t cp;
-      decode_codepoint(s8.substr(beg, i - beg), cp);
-      out += cp;
-    }
-    return out;
-  }
 };
 
 //-----------------------------------------------------------------------------
@@ -2624,6 +2886,10 @@ public:
     return prefix_len;
   }
 
+  size_t longest_common_prefix_search(std::string_view sv) const {
+    return matcher<output_t>::longest_prefix_len(sv);
+  }
+
   bool
   predictive_search(std::string_view sv,
                     std::function<void(const std::string &, const output_t &)>
@@ -2669,6 +2935,24 @@ public:
     return ret;
   }
 
+  std::vector<std::vector<std::pair<std::string, output_t>>>
+  prefix_distance_search(std::string_view sv, size_t max_distance) const {
+    std::vector<std::vector<std::pair<std::string, output_t>>> ret(
+        max_distance, std::vector<std::pair<std::string, output_t>>());
+    if (sv.empty()) { return ret; }
+    size_t longest_prefix_len = matcher<output_t>::longest_prefix_len(sv);
+    std::cout << "sv.size(): " << sv.size() << std::endl;
+    std::cout << "longest_prefix_len: " << longest_prefix_len << std::endl;
+    matcher<output_t>::depth_first_visit(
+        matcher<output_t>::header_.start_address, std::string(), output_t{},
+        PrefixDistanceAutomaton(sv, max_distance, longest_prefix_len),
+        [&](const auto &word, const auto &output, const auto &automaton) {
+          ret[automaton.distance()].emplace_back(word, output);
+        });
+
+    return ret;
+  }
+
   std::pair<std::vector<std::pair<std::string, output_t>>, std::string>
   regex_search(const std::string_view &pattern) const {
     std::vector<std::pair<std::string, output_t>> results;
@@ -2678,12 +2962,12 @@ public:
     if (!error_message.empty()) { return {results, error_message}; }
 
     matcher<output_t>::depth_first_visit(
-        matcher<output_t>::header_.start_address, // 从根节点开始遍历
-        std::string(),                            // 初始空字符串
-        output_t(),                               // 初始空输出
-        automaton,                                // 正则自动机
+        matcher<output_t>::header_.start_address, // start from root node
+        std::string(),                            // initial empty string
+        output_t(),                               // initial empty output
+        automaton,                                // regex automaton
         [&](const std::string &word, const output_t &output) {
-          // 匹配成功时回调，收集结果
+          // callback when match success
           results.emplace_back(word, output);
         });
 
