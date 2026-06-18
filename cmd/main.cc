@@ -2,6 +2,7 @@
 #include <fstlib.h>
 #include <fstream>
 #include <sstream>
+#include "thread_pool.h"
 
 using namespace std;
 
@@ -250,6 +251,8 @@ void map_search_word(const T &byte_code, string_view cmd, bool verbose,
       cout << word << ": " << output << endl;
     }
   } else if (cmd == "regex") {
+    // ThreadPool thread_pool(get_optimal_thread_num(TaskType::CPU_INTENSIVE));
+    // auto p_results = matcher.regex_search(word, thread_pool);
     auto p_results = matcher.regex_search(word);
     const auto &results = p_results.first;
     const auto &error_message = p_results.second;

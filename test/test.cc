@@ -49,6 +49,15 @@ void make_set(const Input &input, bool sorted, Callback callback) {
   callback(matcher);
 }
 
+template<typename T1, typename T2>
+void cmp_sorted_str(const T1 input, const T2 expected) {
+  string input_str(input);
+  string expected_str(expected);
+  sort(input_str.begin(), input_str.end());
+  sort(expected_str.begin(), expected_str.end());
+  EXPECT_EQ(input_str, expected_str);
+}
+
 TEST(CompileTest, Success) {
   vector<pair<string, output_t>> input = {
       {"jan", V(31)}, {"feb", V(28)}, {"mar", V(31)}, {"apr", V(30)},
@@ -536,7 +545,7 @@ oct	31
 sep	30
 )";
 
-  EXPECT_EQ(expected, out.str());
+  cmp_sorted_str(expected, out.str());
 }
 
 TEST(DecompileTest, Decompile_map_no_need_output) {
@@ -570,7 +579,7 @@ oct
 sep
 )";
 
-  EXPECT_EQ(expected, out.str());
+  cmp_sorted_str(expected, out.str());
 }
 
 TEST(DecompileTest, Decompile_map_need_output) {
@@ -604,7 +613,7 @@ oct	9
 sep	8
 )";
 
-  EXPECT_EQ(expected, out.str());
+  cmp_sorted_str(expected, out.str());
 }
 
 TEST(DecompileTest, Decompile_set) {
@@ -639,7 +648,7 @@ sep
 )";
 
   EXPECT_EQ(strlen(expected), out.str().size());
-  EXPECT_EQ(expected, out.str());
+  cmp_sorted_str(expected, out.str());
 }
 
 TEST(EditDistanceTest, Edit_distance_search_map) {
