@@ -29,7 +29,7 @@
 #include <unordered_set>
 #include <vector>
 #define PCRE2_CODE_UNIT_WIDTH 8
-#include "thread_pool.h"
+// #include "thread_pool.h"
 #include <pcre2.h>
 
 #if !defined(__cplusplus) || __cplusplus < 201703L
@@ -2633,41 +2633,42 @@ protected:
                                        thread_pool, accept_mutex, results);
           }
         }
-
-        if (ope.data.last_transition) { break; }
-        address -= byte_size;
       }
+
+      if (ope.data.last_transition) { break; }
+      address -= byte_size;
     }
   }
-
-  // template <typename T, typename U>
-  // void depth_first_visit(uint32_t address, const std::string &partial_word,
-  //                        const output_t &partial_output, const T &transit,
-  //                        U accept,
-  //                        std::string_view prefix = std::string_view()) const
-  //                        {
-  //   struct Dummy_mutex {};
-  //   Dummy_mutex dummy_mutex;
-  //   depth_first_visit_single(address, partial_word, partial_output, transit,
-  //                            accept, dummy_mutex, prefix);
-  // }
 
   template <typename T, typename U>
   void depth_first_visit(uint32_t address, const std::string &partial_word,
                          const output_t &partial_output, const T &transit,
                          U accept,
-                         std::string_view prefix = std::string_view()) const {
-    std::mutex accept_mutex;
-    std::vector<std::future<void>> results;
-    ThreadPool thread_pool(8);
-    depth_first_visit_parallel(address, partial_word, partial_output, transit,
-                               accept, prefix, thread_pool, accept_mutex,
-                               results);
-
-    for (auto &result : results) {
-      result.get();
-    }
+                         std::string_view prefix = std::string_view()) const
+                         {
+    struct Dummy_mutex {};
+    Dummy_mutex dummy_mutex;
+    depth_first_visit_single(address, partial_word, partial_output, transit,
+                             accept, dummy_mutex, prefix);
   }
+
+  // for test
+  // template <typename T, typename U>
+  // void depth_first_visit(uint32_t address, const std::string &partial_word,
+  //                        const output_t &partial_output, const T &transit,
+  //                        U accept,
+  //                        std::string_view prefix = std::string_view()) const {
+  //   std::mutex accept_mutex;
+  //   std::vector<std::future<void>> results;
+  //   ThreadPool thread_pool(8);
+  //   depth_first_visit_parallel(address, partial_word, partial_output, transit,
+  //                              accept, prefix, thread_pool, accept_mutex,
+  //                              results);
+
+  //   for (auto &result : results) {
+  //     result.get();
+  //   }
+  // }
 
   template <typename T, typename U, typename ThreadPool>
   void depth_first_visit(uint32_t address, const std::string &partial_word,
@@ -2958,8 +2959,7 @@ public:
         pcre2_match_data_create_from_pattern(re_.get(), nullptr),
         [](pcre2_match_data *m) { pcre2_match_data_free(m); });
 
-    // Evaluate the empty string initially to handle cases like "^$" or
-    // "^a?$"
+    // Evaluate the empty string initially to handle cases like "^$" or "^a?$"
     evaluate();
   }
 
