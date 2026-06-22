@@ -1,7 +1,10 @@
 ﻿#include <gtest/gtest.h>
 
 #include <cmath>
-#include <fstlib.h>
+#include <fstlib/map.h>
+#include <fstlib/set.h>
+#include <fstlib/compile.h>
+#include <fstlib/decompile.h>
 
 using namespace std;
 

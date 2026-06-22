@@ -1,8 +1,12 @@
-#include "flags.h"
-#include <fstlib.h>
 #include <fstream>
 #include <sstream>
+
+#include "flags.h"
 #include "thread_pool.h"
+#include <fstlib/compile.h>
+#include <fstlib/decompile.h>
+#include <fstlib/map.h>
+#include <fstlib/set.h>
 
 using namespace std;
 
